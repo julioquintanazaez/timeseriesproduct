@@ -1,0 +1,523 @@
+ï»¿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>Atlas Intelligence | Product Cluster Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #f0f4f8;
+            color: #1a2634;
+            padding: 2rem 1.5rem;
+        }
+        .dashboard { max-width: 1400px; margin: 0 auto; }
+        .input-panel {
+            background: white;
+            border-radius: 28px;
+            padding: 1.6rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.05);
+            border: 1px solid #e2edf2;
+        }
+        .input-panel h3 {
+            font-size: 1.3rem;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: #1f5e7a;
+        }
+        .input-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+        .file-label, .load-btn {
+            background: #1f6e8c;
+            color: white;
+            border: none;
+            padding: 0.7rem 1.5rem;
+            font-weight: 600;
+            border-radius: 40px;
+            cursor: pointer;
+            transition: 0.2s;
+            font-size: 0.85rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .file-label:hover, .load-btn:hover { background: #0e5a75; transform: translateY(-1px); }
+        .file-label { background: #2c6e49; }
+        #fileInput { display: none; }
+        .reset-btn { background: #4b5e77; }
+        .json-input-area textarea {
+            width: 100%;
+            min-height: 200px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 0.7rem;
+            padding: 0.8rem;
+            border: 1px solid #cbd5e1;
+            border-radius: 20px;
+            background: #fefefe;
+            resize: vertical;
+        }
+        .error-msg {
+            color: #c23b22;
+            background: #fff0ee;
+            padding: 0.5rem 1rem;
+            border-radius: 40px;
+            font-size: 0.8rem;
+            margin-top: 0.5rem;
+        }
+        .hero {
+            background: linear-gradient(135deg, #0f2b3d 0%, #1b4f6e 100%);
+            border-radius: 32px;
+            padding: 1.8rem 2rem;
+            margin-bottom: 2rem;
+            color: white;
+            box-shadow: 0 12px 30px rgba(0,0,0,0.1);
+        }
+        .hero h1 { font-size: 2rem; font-weight: 700; display: flex; align-items: center; gap: 12px; }
+        .hero p { margin-top: 8px; opacity: 0.85; }
+        .stats-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            margin-top: 1.5rem;
+        }
+        .stat-card {
+            background: rgba(255,255,255,0.12);
+            backdrop-filter: blur(4px);
+            border-radius: 24px;
+            padding: 0.8rem 1.4rem;
+            text-align: center;
+        }
+        .stat-card .stat-value { font-size: 1.6rem; font-weight: 800; }
+        .kpi-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+        .kpi-item {
+            background: white;
+            border-radius: 28px;
+            padding: 1.2rem 1.5rem;
+            flex: 1;
+            min-width: 170px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.03);
+            border: 1px solid #e9edf2;
+        }
+        .kpi-icon { font-size: 1.6rem; color: #1f6e8c; margin-bottom: 6px; }
+        .kpi-number { font-size: 1.8rem; font-weight: 800; color: #0e2a38; }
+        .two-col {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1.8rem;
+            margin-bottom: 2rem;
+        }
+        .card {
+            background: white;
+            border-radius: 28px;
+            padding: 1.5rem;
+            flex: 1;
+            border: 1px solid #eef2f6;
+            box-shadow: 0 6px 14px rgba(0,0,0,0.02);
+        }
+        .card h3 {
+            font-size: 1.2rem;
+            font-weight: 600;
+            margin-bottom: 1.2rem;
+            border-left: 4px solid #2c8cad;
+            padding-left: 14px;
+        }
+        canvas { max-height: 260px; width: 100%; }
+        .cluster-item, .periodic-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #edf2f7;
+        }
+        .badge {
+            background: #eef2ff;
+            padding: 4px 12px;
+            border-radius: 30px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        footer {
+            text-align: center;
+            margin-top: 2rem;
+            font-size: 0.75rem;
+            color: #5b6e82;
+            border-top: 1px solid #e2e8f0;
+            padding-top: 1.5rem;
+        }
+        @media (max-width: 700px) { body { padding: 1rem; } }
+        .file-info {
+            font-size: 0.75rem;
+            color: #1f6e8c;
+            margin-top: 0.5rem;
+        }
+        .warning-badge {
+            background: #fef3c7;
+            color: #92400e;
+            padding: 0.5rem 1rem;
+            border-radius: 12px;
+            font-size: 0.7rem;
+            margin-bottom: 1rem;
+        }
+    </style>
+</head>
+<body>
+<div class="dashboard">
+    <div class="input-panel">
+        <h3><i class="fas fa-cloud-upload-alt"></i> Load Analysis Results</h3>
+        <div class="input-buttons">
+            <label for="fileInput" class="file-label"><i class="fas fa-folder-open"></i> Upload JSON File</label>
+            <input type="file" id="fileInput" accept=".json,application/json">
+            <button class="load-btn" id="loadJsonBtn"><i class="fas fa-code"></i> Load from Text</button>
+            <button class="load-btn reset-btn" id="resetDemoBtn"><i class="fas fa-sync-alt"></i> Load Demo</button>
+        </div>
+        <div class="json-input-area">
+            <textarea id="jsonInput" placeholder='Paste your JSON here (single or double quotes accepted, auto-converted)'></textarea>
+            <div id="loadError" class="error-msg" style="display:none;"></div>
+            <div id="fileInfo" class="file-info"></div>
+        </div>
+        <div class="warning-badge">
+            <i class="fas fa-info-circle"></i> Accepts Python-style JSON with single quotes, np.int64(), np.float64(), array([...]), True/False/None, and scikit-learn objects
+        </div>
+    </div>
+
+    <div id="dashboardContent" style="display: none;">
+        <div class="hero">
+            <h1><i class="fas fa-chart-line"></i> Economic Intelligence · Product Cluster Dashboard</h1>
+            <p>Time series analysis: stationarity, periodicity, trends & unsupervised clustering</p>
+            <div class="stats-grid" id="heroStats"></div>
+        </div>
+
+        <div class="kpi-row" id="kpiRow"></div>
+
+        <div class="two-col">
+            <div class="card"><h3><i class="fas fa-layer-group"></i> Strategic Clusters</h3><div id="clusterDetails"></div></div>
+            <div class="card"><h3><i class="fas fa-chart-pie"></i> Cluster Distribution</h3><canvas id="clusterPieChart" width="400" height="260"></canvas><div id="clusterMeta" style="margin-top: 8px; font-size:0.8rem;"></div></div>
+        </div>
+
+        <div class="two-col">
+            <div class="card"><h3><i class="fas fa-chart-gantt"></i> Main Periodic Signals</h3><div id="periodicList"></div></div>
+            <div class="card"><h3><i class="fas fa-arrow-trend-up"></i> Trend & Stationarity Summary</h3><div id="trendSummary"></div></div>
+        </div>
+
+        <div class="card"><h3><i class="fas fa-boxes"></i> Representative Product</h3><div id="sampleProduct"></div></div>
+        <footer><i class="fas fa-database"></i> Powered by ADF test, periodicity detection & K-means clustering</footer>
+    </div>
+</div>
+
+<script>
+    let chartInstance = null;
+
+    // Converts Python-style JSON to standard JSON
+    function convertPythonJsonToStandard(jsonStr) {
+        try {
+            JSON.parse(jsonStr);
+            return jsonStr;
+        } catch(e) {}
+        
+        try {
+            let converted = jsonStr;
+            
+            // Remove comments
+            converted = converted.replace(/\/\/.*$/gm, '');
+            
+            // Convert np.int64(value), np.float64(value) to value
+            converted = converted.replace(/np\.int64\((\d+)\)/g, '$1');
+            converted = converted.replace(/np\.float64\(([\d.eE+-]+)\)/g, '$1');
+            
+            // Convert np.int32, np.int16, etc.
+            converted = converted.replace(/np\.int32\((\d+)\)/g, '$1');
+            converted = converted.replace(/np\.int16\((\d+)\)/g, '$1');
+            converted = converted.replace(/np\.int8\((\d+)\)/g, '$1');
+            
+            // Convert array([...]) to [...]
+            converted = converted.replace(/array\(\[([\s\S]*?)\]\)/g, '[$1]');
+            
+            // Convert np.array([...]) to [...]
+            converted = converted.replace(/np\.array\(\[([\s\S]*?)\]\)/g, '[$1]');
+            
+            // Convert True/False/None to JSON
+            converted = converted.replace(/\bTrue\b/g, 'true');
+            converted = converted.replace(/\bFalse\b/g, 'false');
+            converted = converted.replace(/\bNone\b/g, 'null');
+            
+            // Convert scikit-learn objects to simple strings
+            converted = converted.replace(/KMeans\([^)]*\)/g, '"KMeans"');
+            converted = converted.replace(/AgglomerativeClustering\([^)]*\)/g, '"AgglomerativeClustering"');
+            converted = converted.replace(/DBSCAN\([^)]*\)/g, '"DBSCAN"');
+            
+            // Handle numeric keys in objects (e.g., {2: value})
+            converted = converted.replace(/([{,])\s*(\d+)\s*:/g, '$1"$2":');
+            
+            // Convert single quotes to double quotes
+            let inString = false;
+            let result = '';
+            for (let i = 0; i < converted.length; i++) {
+                let c = converted[i];
+                if (c === '"') {
+                    inString = !inString;
+                    result += c;
+                } else if (c === "'" && !inString) {
+                    result += '"';
+                } else {
+                    result += c;
+                }
+            }
+            converted = result;
+            
+            // Remove trailing commas
+            converted = converted.replace(/,(\s*[}\]])/g, '$1');
+            
+            // Handle dict format with quotes
+            converted = converted.replace(/\{\s*'/g, '{"');
+            converted = converted.replace(/'\s*:/g, '":');
+            
+            JSON.parse(converted);
+            return converted;
+        } catch(e) {
+            console.error("Conversion error:", e);
+            throw new Error("Could not convert JSON. Please check the format.");
+        }
+    }
+
+    function renderDashboard(data) {
+        if (!data.analyses_results || !Array.isArray(data.analyses_results)) {
+            throw new Error("Missing 'analyses_results' array");
+        }
+        
+        const products = data.analyses_results;
+        const kmeans = data.kmeans_results || {};
+        const clusterSummary = data.cluster_summary || [];
+        const hierSil = data.hierarchical_results?.silhouette_score || 
+                        (kmeans.silhouette_scores ? kmeans.silhouette_scores[kmeans.optimal_k] : 0.72);
+
+        // Calculate KPIs
+        let increasing = 0, decreasing = 0, stationaryCount = 0, totalAnomalies = 0, productsWithPeriod = 0;
+        products.forEach(p => {
+            if (p.trend?.trend_direction === 'increasing') increasing++;
+            else if (p.trend?.trend_direction === 'decreasing') decreasing++;
+            if (p.stationarity?.is_stationary === true) stationaryCount++;
+            totalAnomalies += (p.anomalies?.anomaly_count || 0);
+            if (p.periodicity?.main_period || (p.periodicity?.significant_periods?.length > 0)) productsWithPeriod++;
+        });
+        const total = products.length;
+
+        // Hero stats
+        document.getElementById('heroStats').innerHTML = `
+            <div class="stat-card"><div class="stat-value">${total}</div><div class="stat-label">Products</div></div>
+            <div class="stat-card"><div class="stat-value">${kmeans.optimal_k || 3}</div><div class="stat-label">Optimal Clusters</div></div>
+            <div class="stat-card"><div class="stat-value">${typeof hierSil === 'number' ? hierSil.toFixed(3) : hierSil}</div><div class="stat-label">Silhouette</div></div>
+            <div class="stat-card"><div class="stat-value">${productsWithPeriod}</div><div class="stat-label">Seasonal/Periodic</div></div>
+        `;
+        
+        // KPIs
+        document.getElementById('kpiRow').innerHTML = `
+            <div class="kpi-item"><div class="kpi-icon"><i class="fas fa-chart-line"></i></div><div class="kpi-number">${increasing}</div><div class="kpi-desc">Increasing Trend</div></div>
+            <div class="kpi-item"><div class="kpi-icon"><i class="fas fa-chart-line fa-flip-horizontal"></i></div><div class="kpi-number">${decreasing}</div><div class="kpi-desc">Decreasing Trend</div></div>
+            <div class="kpi-item"><div class="kpi-icon"><i class="fas fa-waveform"></i></div><div class="kpi-number">${stationaryCount}</div><div class="kpi-desc">Stationary (ADF)</div></div>
+            <div class="kpi-item"><div class="kpi-icon"><i class="fas fa-exclamation-triangle"></i></div><div class="kpi-number">${totalAnomalies}</div><div class="kpi-desc">Anomalies Detected</div></div>
+        `;
+
+        // Cluster details
+        let clusterHtml = '';
+        let clusterPieLabels = [], clusterPieCounts = [];
+        
+        if (clusterSummary.length) {
+            clusterSummary.forEach(c => {
+                clusterHtml += `<div class="cluster-item"><span><strong>${c.cluster_name || ('Cluster '+c.cluster_id)}</strong> – ${c.characteristics || ''}</span><span class="badge">${c.n_products} products (${c.percentage}%)</span></div>`;
+                clusterPieLabels.push(c.cluster_name || `Cluster ${c.cluster_id}`);
+                clusterPieCounts.push(c.n_products);
+            });
+        } else if (kmeans.labels && kmeans.labels.length) {
+            const counts = {};
+            kmeans.labels.forEach(l => { counts[l] = (counts[l]||0)+1; });
+            for (let [k,v] of Object.entries(counts)) {
+                clusterHtml += `<div class="cluster-item"><span><strong>Cluster ${k}</strong></span><span class="badge">${v} products (${((v/total)*100).toFixed(1)}%)</span></div>`;
+                clusterPieLabels.push(`Cluster ${k}`);
+                clusterPieCounts.push(v);
+            }
+        } else {
+            clusterHtml = '<div class="cluster-item">No cluster summary available</div>';
+        }
+        
+        document.getElementById('clusterDetails').innerHTML = clusterHtml;
+        document.getElementById('clusterMeta').innerHTML = `<i class="fas fa-chart-simple"></i> Optimal K = ${kmeans.optimal_k || '?'} &nbsp;|&nbsp; Silhouette = ${typeof hierSil === 'number' ? hierSil.toFixed(4) : hierSil}`;
+
+        // Pie chart
+        const ctx = document.getElementById('clusterPieChart').getContext('2d');
+        if (chartInstance) chartInstance.destroy();
+        if (clusterPieLabels.length && clusterPieCounts.length) {
+            chartInstance = new Chart(ctx, {
+                type: 'pie',
+                data: { labels: clusterPieLabels, datasets: [{ data: clusterPieCounts, backgroundColor: ['#2c8cad','#4aa3bf','#6cb2c9','#9ac9d9','#b8dae8'], borderWidth: 0 }] },
+                options: { responsive: true, maintainAspectRatio: true, plugins: { legend: { position: 'bottom' } } }
+            });
+        }
+
+        // Periodic signals
+        let periodicProducts = products.filter(p => p.periodicity?.main_period || (p.periodicity?.significant_periods?.length > 0))
+            .map(p => ({ name: p.product_name, id: p.product_id, main: p.periodicity.main_period, sigLen: p.periodicity.significant_periods?.length || 0, periods: p.periodicity.significant_periods?.slice(0,3) || [] }));
+        periodicProducts.sort((a,b) => (b.sigLen) - (a.sigLen));
+        let periodicHtml = periodicProducts.slice(0,5).map(p => `<div class="periodic-item"><span><i class="fas fa-waveform"></i> <strong>${p.name}</strong> (ID ${p.id}) – main period: ${p.main || '—'} (${p.sigLen} periods)</span><span class="badge">${p.periods.join(', ')}</span></div>`).join('');
+        if(!periodicHtml) periodicHtml = '<div class="periodic-item">No periodic patterns detected</div>';
+        document.getElementById('periodicList').innerHTML = periodicHtml;
+
+        // Trend summary
+        const stationaryIncr = products.filter(p => p.stationarity?.is_stationary && p.trend?.trend_direction === 'increasing').length;
+        const stationaryDecr = products.filter(p => p.stationarity?.is_stationary && p.trend?.trend_direction === 'decreasing').length;
+        const nonStatIncr = products.filter(p => !p.stationarity?.is_stationary && p.trend?.trend_direction === 'increasing').length;
+        const nonStatDecr = products.filter(p => !p.stationarity?.is_stationary && p.trend?.trend_direction === 'decreasing').length;
+        
+        document.getElementById('trendSummary').innerHTML = `
+            <div style="display:flex; justify-content:space-between;"><span><i class="fas fa-chart-line" style="color:#2b7e3a;"></i> Stationary + Increasing</span> <strong>${stationaryIncr}</strong></div>
+            <div style="display:flex; justify-content:space-between;"><span><i class="fas fa-chart-line" style="color:#c23b22;"></i> Stationary + Decreasing</span> <strong>${stationaryDecr}</strong></div>
+            <div style="display:flex; justify-content:space-between;"><span><i class="fas fa-chart-line" style="color:#2b7e3a;"></i> Non-Stationary + Increasing</span> <strong>${nonStatIncr}</strong></div>
+            <div style="display:flex; justify-content:space-between;"><span><i class="fas fa-chart-line" style="color:#c23b22;"></i> Non-Stationary + Decreasing</span> <strong>${nonStatDecr}</strong></div>
+            <div class="badge" style="margin-top:8px; background:#eef2ff;"><i class="fas fa-chart-simple"></i> Trend direction based on linear slope</div>
+        `;
+
+        // Representative product
+        if (products.length) {
+            const interesting = products.find(p => p.periodicity?.main_period) || products[0];
+            const perVal = interesting.periodicity?.main_period || (interesting.periodicity?.significant_periods?.length ? interesting.periodicity.significant_periods[0] : 'none');
+            const slopeVal = interesting.trend?.slope;
+            const pValue = interesting.stationarity?.p_value;
+            document.getElementById('sampleProduct').innerHTML = `
+                <div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center;">
+                    <div><i class="fas fa-tag"></i> <strong>${interesting.product_name} (ID ${interesting.product_id})</strong><br>
+                    <span style="font-size:0.8rem;">Slope: ${slopeVal !== undefined ? slopeVal.toExponential(4) : 'N/A'} &nbsp;|&nbsp; 
+                    Stationary: ${interesting.stationarity?.is_stationary ? '? Yes' : '? No'}</span></div>
+                    <div><span class="badge"><i class="fas fa-chart-line"></i> ${interesting.trend?.trend_direction || 'unknown'} trend</span>
+                    <span class="badge"><i class="fas fa-waveform"></i> Period: ${perVal}</span></div>
+                </div>
+                <div style="margin-top:10px; font-size:0.8rem; background:#f8fafc; border-radius:16px; padding:8px;">
+                Anomalies: ${interesting.anomalies?.anomaly_count || 0} &nbsp;|&nbsp; 
+                ADF p-value: ${pValue !== undefined ? pValue.toExponential(3) : '-'}
+                </div>
+            `;
+        } else {
+            document.getElementById('sampleProduct').innerHTML = '<div>No product data available</div>';
+        }
+    }
+
+    // DOM elements
+    const fileInput = document.getElementById('fileInput');
+    const loadBtn = document.getElementById('loadJsonBtn');
+    const resetBtn = document.getElementById('resetDemoBtn');
+    const jsonTextarea = document.getElementById('jsonInput');
+    const dashboardDiv = document.getElementById('dashboardContent');
+    const errorDiv = document.getElementById('loadError');
+    const fileInfoSpan = document.getElementById('fileInfo');
+
+    function showError(msg) {
+        errorDiv.style.display = 'block';
+        errorDiv.innerText = msg;
+        dashboardDiv.style.display = 'none';
+    }
+
+    function clearError() {
+        errorDiv.style.display = 'none';
+        errorDiv.innerText = '';
+    }
+
+    function loadAndRender(jsonString, source = 'textbox') {
+        try {
+            clearError();
+            if (!jsonString || jsonString.trim() === '') throw new Error("JSON is empty.");
+            
+            console.log("Processing JSON...");
+            
+            // Convert Python-style JSON to standard JSON
+            const standardJson = convertPythonJsonToStandard(jsonString);
+            const parsed = JSON.parse(standardJson);
+            
+            if (!parsed.analyses_results || !Array.isArray(parsed.analyses_results)) {
+                throw new Error("Invalid structure: missing 'analyses_results' array.");
+            }
+            
+            console.log("Products loaded:", parsed.analyses_results.length);
+            renderDashboard(parsed);
+            dashboardDiv.style.display = 'block';
+            dashboardDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            
+            if (source === 'file') fileInfoSpan.innerHTML = '<i class="fas fa-check-circle"></i> File loaded successfully.';
+            else fileInfoSpan.innerHTML = '<i class="fas fa-check-circle"></i> Data loaded successfully.';
+        } catch (err) {
+            console.error("Detailed error:", err);
+            showError(`JSON processing error: ${err.message}`);
+            dashboardDiv.style.display = 'none';
+        }
+    }
+
+    // File upload handler
+    fileInput.addEventListener('change', (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+        
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const content = e.target.result;
+            jsonTextarea.value = content;
+            loadAndRender(content, 'file');
+            fileInfoSpan.innerHTML = `<i class="fas fa-file"></i> File: ${file.name} (${(file.size/1024).toFixed(1)} KB)`;
+        };
+        reader.onerror = () => showError("Failed to read file.");
+        reader.readAsText(file);
+        fileInput.value = '';
+    });
+
+    // Load from textbox
+    loadBtn.addEventListener('click', () => {
+        const rawJson = jsonTextarea.value.trim();
+        if (!rawJson) {
+            showError("No JSON in textbox. Paste valid JSON or upload a file.");
+            return;
+        }
+        loadAndRender(rawJson, 'textbox');
+    });
+
+    // Demo data
+    resetBtn.addEventListener('click', () => {
+        const demoJson = `{
+            "analyses_results": [
+                {"product_id": "1", "product_name": "Electronics_001", "trend": {"trend_direction": "increasing", "slope": 0.00045}, "stationarity": {"is_stationary": true, "p_value": 1e-8}, "periodicity": {"main_period": null, "significant_periods": []}, "anomalies": {"anomaly_count": 2}},
+                {"product_id": "2", "product_name": "Office_002", "trend": {"trend_direction": "decreasing", "slope": -0.0021}, "stationarity": {"is_stationary": false, "p_value": 0.35}, "periodicity": {"main_period": 3, "significant_periods": [3, 6, 9]}, "anomalies": {"anomaly_count": 5}},
+                {"product_id": "3", "product_name": "Home_003", "trend": {"trend_direction": "increasing", "slope": 0.00012}, "stationarity": {"is_stationary": true, "p_value": 0.001}, "periodicity": {"main_period": null, "significant_periods": []}, "anomalies": {"anomaly_count": 1}},
+                {"product_id": "4", "product_name": "Clothing_004", "trend": {"trend_direction": "decreasing", "slope": -0.0041}, "stationarity": {"is_stationary": false, "p_value": 0.12}, "periodicity": {"main_period": 5, "significant_periods": [5, 10]}, "anomalies": {"anomaly_count": 3}},
+                {"product_id": "5", "product_name": "Tools_005", "trend": {"trend_direction": "increasing", "slope": 0.0022}, "stationarity": {"is_stationary": false, "p_value": 0.08}, "periodicity": {"main_period": 2, "significant_periods": [2, 4, 6]}, "anomalies": {"anomaly_count": 0}}
+            ],
+            "kmeans_results": {"labels": [0,1,2,1,0], "optimal_k": 3, "silhouette_scores": {"2":0.55, "3":0.74, "4":0.68}},
+            "cluster_summary": [
+                {"cluster_id": 0, "cluster_name": "Cluster_A", "n_products": 2, "percentage": 40, "characteristics": "Decreasing trend, seasonal"},
+                {"cluster_id": 1, "cluster_name": "Cluster_B", "n_products": 2, "percentage": 40, "characteristics": "Increasing trend, stationary"},
+                {"cluster_id": 2, "cluster_name": "Cluster_C", "n_products": 1, "percentage": 20, "characteristics": "High variability, non-stationary"}
+            ],
+            "hierarchical_results": {"silhouette_score": 0.736}
+        }`;
+        jsonTextarea.value = demoJson;
+        loadAndRender(demoJson, 'textbox');
+        fileInfoSpan.innerHTML = '<i class="fas fa-sync-alt"></i> Demo loaded.';
+    });
+
+    // Initial instructions
+    window.addEventListener('DOMContentLoaded', () => {
+        jsonTextarea.placeholder = 'Paste your JSON here. Accepts Python-style format with single quotes, np.int64(), array([...]), etc.';
+        fileInfoSpan.innerHTML = '<i class="fas fa-info-circle"></i> Paste your JSON and click "Load from Text" or upload a file.';
+    });
+</script>
+</body>
+</html>

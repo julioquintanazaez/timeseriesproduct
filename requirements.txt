@@ -1,0 +1,26 @@
+# Core Data Manipulation
+pandas
+numpy
+
+# Time Series Analysis
+statsmodels
+scipy
+
+# Feature Extraction
+tsfresh
+
+# Wavelet Transform
+PyWavelets
+
+# Machine Learning & Clustering
+scikit-learn
+
+# Progress Bars (optional but recommended)
+tqdm
+
+# Additional Statistical Tools
+scipy
+
+fastapi
+pydantic
+uvicorn

@@ -1,0 +1,11 @@
+# Folders
+__pycache__
+venvts
+
+# Envirnment variables
+.env
+
+# Files
+analyses_results.json
+.html
+.csv
