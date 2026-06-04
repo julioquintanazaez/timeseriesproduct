@@ -17,7 +17,8 @@ from ts_service import (
     perform_hierarchical_clustering,
     perform_kmeans_clustering,
     convert_numpy_nativo,
-    analyze_product_time_series
+    analyze_product_time_series,
+    get_products_time_series
     )
 
 
@@ -133,6 +134,76 @@ async def run_ts_clusters_analysis(
                 }
 
         return JSONResponse(content=jsonable_encoder(clean_result))
+
+        
+    except pd.errors.EmptyDataError:
+        raise HTTPException(400, "File is empty")
+    except json.JSONDecodeError:
+        raise HTTPException(400, "Invalid JSON format")
+    except Exception as e:
+        raise HTTPException(500, f"Error processing file: {str(e)}")
+    
+
+@app.post("/extract_products_time_series")
+async def extract_products_time_series(
+    file: UploadFile = File(..., description="CSV or JSON with products: id_product, name, category, amount, time_sale")
+):
+    """
+    Computes the time-series for each products in sales data  
+    
+    Expected file format:
+    - id_product (int)
+    - name (str)
+    - category (str)
+    - amount (float)
+    - time_sale (datetime)
+
+    return: A time series for each product, its tendency and its stacionarity state
+
+    """
+    # Read file
+    try:
+        content = await file.read()
+        
+        if file.filename.endswith('.json'):
+            data = json.loads(content)
+            if isinstance(data, dict) and 'products' in data:
+                data = data['products']
+            df = pd.DataFrame(data)  # Convert to DataFrame consistently
+        elif file.filename.endswith('.csv'):
+            df = pd.read_csv(StringIO(content.decode('utf-8')))
+        else:
+            raise HTTPException(400, "Unsupported format. Use JSON or CSV")
+        
+        # Validate required fields
+        required_fields = ['id_product', 'name', 'category', 'amount', 'time_sale']
+        missing_fields = [field for field in required_fields if field not in df.columns]
+        if missing_fields:
+            raise HTTPException(400, f"Missing required fields: {missing_fields}. Needs: {required_fields}")
+        
+        # Convert time_sale to datetime
+        df['time_sale'] = pd.to_datetime(df['time_sale'])
+        
+        # Processing pipeline:
+        #----------Aggregte data from input--------------- 
+        aggregated_data = aggregate_sales_by_time(df)
+
+        #----------Compute analyzis for each product----------
+        product_ids = aggregated_data['id_product'].unique()
+        time_series_results = []
+
+        for i, product_id in enumerate(product_ids):
+            if (i + 1) % 20 == 0:
+                print(f" Progress: {i+1}/{len(product_ids)} products analyzed")
+            time_series = get_products_time_series(product_id, aggregated_data)
+            if time_series:
+                time_series_results.append(time_series)
+        
+        corrected_json = convert_numpy_nativo({
+            'time_series_results': time_series_results
+        })
+       
+        return JSONResponse(content=jsonable_encoder(corrected_json))
 
         
     except pd.errors.EmptyDataError:

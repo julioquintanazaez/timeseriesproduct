@@ -251,7 +251,7 @@ def analyze_product_time_series(product_id, aggregated_data):
     
     # Perform various analyses
     stationarity = convert_numpy_nativo(test_stationarity(series))
-    decomposition = decompose_time_series(series)
+    #decomposition = decompose_time_series(series)
     trend = detect_trend(series)
     periodicity = convert_numpy_nativo(detect_periodicity(series))
     stats_features = calculate_statistical_features(series)
@@ -272,6 +272,38 @@ def analyze_product_time_series(product_id, aggregated_data):
         'periodicity': periodicity,
         'statistical_features': stats_features,
         'anomalies': anomalies,
+        'raw_series': series,
+    }
+    
+    return analysis
+
+
+def get_products_time_series(product_id, aggregated_data):
+    """
+    Perform comprehensive time series analysis for a single product
+    """
+    product_data = aggregated_data[aggregated_data['id_product'] == product_id]
+    series, dates = extract_time_series_for_product(product_data, 'sales_count')
+    
+    if len(series) < 7:  # Need at least 7 points for meaningful analysis
+        return None
+    
+    # Perform various analyses
+    stationarity = convert_numpy_nativo(test_stationarity(series))
+    trend = detect_trend(series)
+    date_range = convert_numpy_nativo({
+            'start': dates[0],
+            'end': dates[-1]
+        })
+    
+    # Summary statistics
+    analysis = {
+        'product_id': str(product_id),
+        'product_name': product_data['product_name'].iloc[0],
+        'series_length': len(series),
+        'date_range': date_range,
+        'stationarity': stationarity.get("is_stationary"),
+        'trend': trend.get("trend_direction"),
         'raw_series': series,
     }
     
