@@ -272,7 +272,7 @@ def analyze_product_time_series(product_id, aggregated_data):
         'periodicity': periodicity,
         'statistical_features': stats_features,
         'anomalies': anomalies,
-        'raw_series': series,
+        #'raw_series': series,
     }
     
     return analysis
