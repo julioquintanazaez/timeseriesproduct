@@ -113,11 +113,6 @@ async def run_ts_clusters_analysis(
                 'percentage': profile['percentage'],
                 'characteristics': ', '.join(profile['characteristics'])
             })
-
-        # Remove from analyses result the raw?series feature
-        print("antes de eliminar")
-        #for product in analyses_results['analyses_results']:
-        #    product.pop('raw_series', None) 
         
         corrected_json = convert_numpy_nativo({
             'analyses_results': analyses_results,
@@ -127,8 +122,7 @@ async def run_ts_clusters_analysis(
             'cluster_summary': cluster_summary,
         })
 
-        print("después de eliminar")
-        
+        # Remove from analyses result the raw?series feature
         for product in corrected_json['analyses_results']:
             product.pop('raw_series', None)
 
