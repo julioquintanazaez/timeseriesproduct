@@ -291,6 +291,7 @@ def get_products_time_series(product_id, aggregated_data):
     # Perform various analyses
     stationarity = convert_numpy_nativo(test_stationarity(series))
     trend = detect_trend(series)
+    periodicity = detect_periodicity(series)
     date_range = convert_numpy_nativo({
             'start': dates[0],
             'end': dates[-1]
@@ -303,8 +304,9 @@ def get_products_time_series(product_id, aggregated_data):
         'series_length': len(series),
         'date_range': date_range,
         'stationarity': stationarity.get("is_stationary"),
+        'critical_values': stationarity.get("critical_values"),
         'trend': trend.get("trend_direction"),
-        'raw_series': series,
+        'significant_periods': periodicity.get("significant_periods")
     }
     
     return analysis

@@ -33,7 +33,7 @@ async def root():
     return {
         "service": "Time-Series Analysis for items",
         "version": "1.0.0",
-        "description": "This API is for the uses of time-series algorithms",
+        "description": "This API uses time-series algorithms to analyse product sales history",
     }
 
 @app.post("/run_ts_clusters_analysis")
