@@ -85,7 +85,7 @@ async def run_ts_clusters_analysis(
         for i, product_id in enumerate(product_ids):
             if (i + 1) % 20 == 0:
                 print(f" Progress: {i+1}/{len(product_ids)} products analyzed")
-            analysis = analyze_product_time_series(product_id, aggregated_data)
+            analysis, series = analyze_product_time_series(product_id, aggregated_data)
             if analysis:
                 analyses_results.append(analysis)
         
@@ -114,6 +114,11 @@ async def run_ts_clusters_analysis(
                 'characteristics': ', '.join(profile['characteristics'])
             })
 
+        # Remove from analyses result the raw?series feature
+        print("antes de eliminar")
+        #for product in analyses_results['analyses_results']:
+        #    product.pop('raw_series', None) 
+        
         corrected_json = convert_numpy_nativo({
             'analyses_results': analyses_results,
             'kmeans_results': kmeans_results,
@@ -122,7 +127,11 @@ async def run_ts_clusters_analysis(
             'cluster_summary': cluster_summary,
         })
 
-        # Crear una copia limpia
+        print("después de eliminar")
+        
+        for product in corrected_json['analyses_results']:
+            product.pop('raw_series', None)
+
         clean_result = {}
         for key, value in corrected_json.items():
             if key not in ['kmeans_results', 'hierarchical_results', 'dbscan_results']:
@@ -132,6 +141,7 @@ async def run_ts_clusters_analysis(
                     k: v for k, v in value.items() 
                     if k not in ['model', 'all_models']
                 }
+
 
         return JSONResponse(content=jsonable_encoder(clean_result))
 
