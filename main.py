@@ -131,7 +131,7 @@ async def run_ts_clusters_analysis(
                     k: v for k, v in value.items() 
                     if k not in ['model', 'all_models']
                 }
-        
+
         return JSONResponse(content=jsonable_encoder(clean_result))
 
         
