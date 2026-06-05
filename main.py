@@ -4,12 +4,15 @@ from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
+import numpy as np
 import json
 import asyncio
 from typing import Optional, Dict, Any
 from datetime import datetime
 from io import StringIO
 import logging
+
+from fastapi.responses import StreamingResponse
 
 from models import (
     ClusterAnalysisResponse, 
@@ -24,7 +27,9 @@ from models import (
 from ts_service import (
     run_cluster_analysis_pipeline,
     run_time_series_extraction_pipeline,
-    convert_numpy_nativo
+    convert_numpy_nativo,
+    aggregate_sales_by_time_optimized,
+    extract_product_series_optimized
 )
 
 # Configure logging
@@ -199,6 +204,194 @@ async def extract_products_time_series(
         logger.error(f"Error processing request: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
 
+
+@app.post("/extract_raw_time_series")
+async def extract_raw_time_series(
+    file: UploadFile = File(..., description="CSV or JSON with product sales data"),
+    frequency: str = "D",
+    max_products: Optional[int] = None
+):
+    """
+    Extracts raw time series for each product (sales count over time)
+    
+    Returns for each product:
+    - product_id: Product identifier
+    - product_name: Product name
+    - time_series: List of sales counts over time
+    - dates: Corresponding dates for each sales point
+    - series_length: Length of the time series
+    
+    **Parameters:**
+    - frequency: Aggregation frequency (D=day, W=week, M=month)
+    - max_products: Maximum number of products to return (useful for large datasets)
+    """
+    try:
+        # Read and validate file
+        df = await read_uploaded_file(file)
+        validate_file_content(df)
+        
+        # Convert time_sale to datetime
+        df['time_sale'] = pd.to_datetime(df['time_sale'])
+        
+        # Aggregate data
+        aggregated_data = aggregate_sales_by_time_optimized(df, frequency)
+        
+        if aggregated_data.empty:
+            return JSONResponse(content={
+                "message": "No data available after aggregation",
+                "total_products": 0,
+                "time_series_data": []
+            })
+        
+        # Extract raw time series for each product
+        product_series_list = extract_product_series_optimized(aggregated_data, 'sales_count')
+        
+        # Limit number of products if specified
+        if max_products and max_products > 0:
+            product_series_list = product_series_list[:max_products]
+        
+        # Prepare the response - FIXED: Convert numpy.datetime64 to string
+        time_series_data = []
+        for product_series in product_series_list:
+            # Convert numpy datetime64 to Python datetime and then to ISO format
+            dates_iso = []
+            for d in product_series.dates:
+                if isinstance(d, np.datetime64):
+                    # Convert numpy.datetime64 to pandas Timestamp then to ISO string
+                    dates_iso.append(pd.Timestamp(d).isoformat())
+                elif isinstance(d, datetime):
+                    dates_iso.append(d.isoformat())
+                else:
+                    dates_iso.append(str(d))
+            
+            time_series_data.append({
+                'product_id': product_series.product_id,
+                'product_name': product_series.product_name,
+                'series_length': product_series.length,
+                'dates': dates_iso,
+                'time_series': product_series.series.tolist(),
+                'start_date': pd.Timestamp(product_series.start_date).isoformat() if isinstance(product_series.start_date, np.datetime64) else product_series.start_date.isoformat(),
+                'end_date': pd.Timestamp(product_series.end_date).isoformat() if isinstance(product_series.end_date, np.datetime64) else product_series.end_date.isoformat(),
+                'summary': {
+                    'mean': float(np.mean(product_series.series)),
+                    'std': float(np.std(product_series.series)),
+                    'min': float(np.min(product_series.series)),
+                    'max': float(np.max(product_series.series)),
+                    'total_sales': float(np.sum(product_series.series))
+                }
+            })
+        
+        logger.info(f"Extracted raw time series for {len(time_series_data)} products")
+        
+        result = {
+            "total_products": len(time_series_data),
+            "aggregation_frequency": frequency,
+            "time_series_data": time_series_data
+        }
+        
+        return JSONResponse(content=jsonable_encoder(convert_numpy_nativo(result)))
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error extracting raw time series: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
+    
+
+
+@app.post("/extract_raw_time_series_stream")
+async def extract_raw_time_series_stream(
+    file: UploadFile = File(..., description="CSV or JSON with product sales data"),
+    frequency: str = "D",
+    max_products: Optional[int] = None
+):
+    """
+    Extracts raw time series with streaming response for better performance
+    """
+    try:
+        # Read and validate file
+        df = await read_uploaded_file(file)
+        validate_file_content(df)
+        
+        # Convert time_sale to datetime
+        df['time_sale'] = pd.to_datetime(df['time_sale'])
+        
+        # Aggregate data
+        aggregated_data = aggregate_sales_by_time_optimized(df, frequency)
+        
+        if aggregated_data.empty:
+            return JSONResponse(content={
+                "message": "No data available after aggregation",
+                "total_products": 0
+            })
+        
+        # Extract raw time series
+        product_series_list = extract_product_series_optimized(aggregated_data, 'sales_count')
+        
+        # Limit number of products if specified
+        if max_products and max_products > 0:
+            product_series_list = product_series_list[:max_products]
+        
+        async def generate_stream():
+            """Generator that yields JSON chunks"""
+            # Send header
+            yield '{"total_products": ' + str(len(product_series_list)) + ', '
+            yield '"aggregation_frequency": "' + frequency + '", '
+            yield '"time_series_data": ['
+            
+            # Send each product one by one
+            for i, product_series in enumerate(product_series_list):
+                # Convert dates to ISO format efficiently
+                dates_iso = [pd.Timestamp(d).isoformat() for d in product_series.dates]
+                
+                product_data = {
+                    'product_id': product_series.product_id,
+                    'product_name': product_series.product_name,
+                    'series_length': product_series.length,
+                    'dates': dates_iso,
+                    'time_series': product_series.series.tolist(),
+                    'start_date': pd.Timestamp(product_series.start_date).isoformat(),
+                    'end_date': pd.Timestamp(product_series.end_date).isoformat(),
+                    'summary': {
+                        'mean': float(np.mean(product_series.series)),
+                        'std': float(np.std(product_series.series)),
+                        'min': float(np.min(product_series.series)),
+                        'max': float(np.max(product_series.series)),
+                        'total_sales': float(np.sum(product_series.series))
+                    }
+                }
+                
+                # Convert to JSON and yield
+                json_chunk = json.dumps(product_data, default=str)
+                
+                # Add comma between items (except last)
+                if i < len(product_series_list) - 1:
+                    json_chunk += ','
+                
+                yield json_chunk
+                
+                # Small delay to avoid memory buildup (optional)
+                if i % 10 == 0:
+                    await asyncio.sleep(0)
+            
+            # Send footer
+            yield ']}'
+        
+        return StreamingResponse(
+            generate_stream(),
+            media_type="application/json",
+            headers={
+                "Content-Disposition": "attachment; filename=time_series_stream.json",
+                "X-Content-Type-Options": "nosniff"
+            }
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error extracting raw time series: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
+    
 
 @app.get("/health")
 async def health_check():
