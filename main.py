@@ -1,238 +1,225 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+# main.py
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
+from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 import json
-import numpy as np
-from typing import List, Dict
+import asyncio
+from typing import Optional, Dict, Any
 from datetime import datetime
 from io import StringIO
+import logging
 
+from models import (
+    ClusterAnalysisResponse, 
+    TimeSeriesExtractResponse,
+    ProductTimeSeriesAnalysis,
+    ProductTimeSeriesSummary,
+    KMeansResults,
+    HierarchicalResults,
+    DBSCANResults,
+    ClusterProfile
+)
 from ts_service import (
-    aggregate_sales_by_time, 
-    normalize_features, 
-    extract_cluster_profiles, 
-    create_feature_matrix,
-    perform_dbscan_clustering, 
-    perform_hierarchical_clustering,
-    perform_kmeans_clustering,
-    convert_numpy_nativo,
-    analyze_product_time_series,
-    get_products_time_series
-    )
+    run_cluster_analysis_pipeline,
+    run_time_series_extraction_pipeline,
+    convert_numpy_nativo
+)
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title="Time-Series Analysis for items",
-    description="This API is for the uses of time-series algorithms",
-    version="1.0.0"
+    title="Time-Series Analysis for Items",
+    description="Optimized API for time-series analysis of product sales",
+    version="2.0.0"
 )
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+def validate_file_content(df: pd.DataFrame) -> None:
+    """Validate file content and required fields"""
+    required_fields = ['id_product', 'name', 'category', 'amount', 'time_sale']
+    missing_fields = [field for field in required_fields if field not in df.columns]
+    if missing_fields:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Missing required fields: {missing_fields}. Required: {required_fields}"
+        )
+    
+    if len(df) == 0:
+        raise HTTPException(status_code=400, detail="File contains no data")
+
+
+async def read_uploaded_file(file: UploadFile) -> pd.DataFrame:
+    """Read and parse uploaded file"""
+    content = await file.read()
+    
+    if file.filename.endswith('.json'):
+        try:
+            data = json.loads(content)
+            if isinstance(data, dict) and 'products' in data:
+                data = data['products']
+            return pd.DataFrame(data)
+        except json.JSONDecodeError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid JSON format: {str(e)}")
+    
+    elif file.filename.endswith('.csv'):
+        try:
+            return pd.read_csv(StringIO(content.decode('utf-8')))
+        except pd.errors.EmptyDataError:
+            raise HTTPException(status_code=400, detail="CSV file is empty")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Error reading CSV: {str(e)}")
+    
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported format. Use CSV or JSON")
+
 
 @app.get("/")
 async def root():
     return {
-        "service": "Time-Series Analysis for items",
-        "version": "1.0.0",
-        "description": "This API uses time-series algorithms to analyse product sales history",
+        "service": "Time-Series Analysis for Items",
+        "version": "2.0.0",
+        "description": "Optimized API for time-series analysis of product sales",
+        "features": [
+            "Product time-series analysis",
+            "Trend and seasonality detection",
+            "Anomaly detection",
+            "Product clustering based on sales patterns"
+        ]
     }
 
-@app.post("/run_ts_clusters_analysis")
+
+@app.post("/run_ts_clusters_analysis", response_model=ClusterAnalysisResponse)
 async def run_ts_clusters_analysis(
-    file: UploadFile = File(..., description="CSV or JSON with products: id_product, name, category, amount, time_sale")
+    file: UploadFile = File(..., description="CSV or JSON with product sales data"),
+    frequency: str = "D",
+    dbscan_eps: float = 1.0,
+    dbscan_min_samples: int = 3
 ):
     """
-    Computes the time-series and clusters for the sales products data  
+    Computes time-series analysis and clustering for product sales data
     
-    Expected file format:
-    - id_product (int)
-    - name (str)
-    - category (str)
-    - amount (float)
-    - time_sale (datetime)
+    **File format requirements:**
+    - id_product (int): Product identifier
+    - name (str): Product name
+    - category (str): Product category
+    - amount (float): Sale amount
+    - time_sale (datetime): Sale timestamp
+    
+    **Parameters:**
+    - frequency: Aggregation frequency (D=day, W=week, M=month)
+    - dbscan_eps: DBSCAN epsilon parameter
+    - dbscan_min_samples: DBSCAN minimum samples parameter
     """
-    
-    # Read file
     try:
-        content = await file.read()
-        
-        if file.filename.endswith('.json'):
-            data = json.loads(content)
-            if isinstance(data, dict) and 'products' in data:
-                data = data['products']
-            df = pd.DataFrame(data)  # Convert to DataFrame consistently
-        elif file.filename.endswith('.csv'):
-            df = pd.read_csv(StringIO(content.decode('utf-8')))
-        else:
-            raise HTTPException(400, "Unsupported format. Use JSON or CSV")
-        
-        # Validate required fields
-        required_fields = ['id_product', 'name', 'category', 'amount', 'time_sale']
-        missing_fields = [field for field in required_fields if field not in df.columns]
-        if missing_fields:
-            raise HTTPException(400, f"Missing required fields: {missing_fields}. Needs: {required_fields}")
+        # Read and validate file
+        df = await read_uploaded_file(file)
+        validate_file_content(df)
         
         # Convert time_sale to datetime
         df['time_sale'] = pd.to_datetime(df['time_sale'])
         
-        # Processing pipeline:
-        #----------Aggregte data from input--------------- 
-        aggregated_data = aggregate_sales_by_time(df)
-
-        #----------Compute analyzis for each product----------
-        product_ids = aggregated_data['id_product'].unique()
-        analyses_results = []
-
-        for i, product_id in enumerate(product_ids):
-            if (i + 1) % 20 == 0:
-                print(f" Progress: {i+1}/{len(product_ids)} products analyzed")
-            analysis, series = analyze_product_time_series(product_id, aggregated_data)
-            if analysis:
-                analyses_results.append(analysis)
+        # Run analysis pipeline
+        logger.info(f"Starting cluster analysis with {len(df)} records")
         
-        #----------Create feature matrix----------
-        feature_matrix = create_feature_matrix(analyses_results, aggregated_data)
+        def progress_callback(current, total):
+            if current % 100 == 0:
+                logger.info(f"Progress: {current}/{total} products analyzed")
         
-        #----------Prepare data for clustering algorithms---------------
-        features_normalized, scaler, feature_cols = normalize_features(feature_matrix)
+        results = run_cluster_analysis_pipeline(
+            df, 
+            frequency=frequency,
+            dbscan_eps=dbscan_eps,
+            dbscan_min_samples=dbscan_min_samples,
+            progress_callback=progress_callback
+        )
         
-        #----------Apply clustering algorithms-------------
-        kmeans_results = perform_kmeans_clustering(features_normalized)
-        hierarchical_results = perform_hierarchical_clustering(features_normalized, n_clusters=kmeans_results['optimal_k'])
-        dbscan_results = perform_dbscan_clustering(features_normalized, eps=1.0, min_samples=3)
-
-        #----------Extract clusters profiles--------------
-        cluster_profiles = extract_cluster_profiles(feature_matrix, kmeans_results['labels'])
+        # Convert to JSON serializable
+        clean_results = convert_numpy_nativo(results)
         
-        #-------------Create cluster profiles summary------------------
-        cluster_summary = []
-        for cluster_id, profile in cluster_profiles.items():
-            cluster_summary.append({
-                'cluster_id': cluster_id,
-                'cluster_name': profile['cluster_name'],
-                'n_products': profile['n_products'],
-                'percentage': profile['percentage'],
-                'characteristics': ', '.join(profile['characteristics'])
-            })
+        logger.info(f"Analysis complete. Found {len(clean_results['cluster_summary'])} clusters")
         
-        corrected_json = convert_numpy_nativo({
-            'analyses_results': analyses_results,
-            'kmeans_results': kmeans_results,
-            'hierarchical_results': hierarchical_results,
-            'dbscan_results': dbscan_results,
-            'cluster_summary': cluster_summary,
-        })
-
-        # Remove from analyses result the raw?series feature
-        for product in corrected_json['analyses_results']:
-            product.pop('raw_series', None)
-
-        clean_result = {}
-        for key, value in corrected_json.items():
-            if key not in ['kmeans_results', 'hierarchical_results', 'dbscan_results']:
-                clean_result[key] = value
-            else:
-                clean_result[key] = {
-                    k: v for k, v in value.items() 
-                    if k not in ['model', 'all_models']
-                }
-
-
-        return JSONResponse(content=jsonable_encoder(clean_result))
-
-        
-    except pd.errors.EmptyDataError:
-        raise HTTPException(400, "File is empty")
-    except json.JSONDecodeError:
-        raise HTTPException(400, "Invalid JSON format")
-    except Exception as e:
-        raise HTTPException(500, f"Error processing file: {str(e)}")
+        return JSONResponse(content=jsonable_encoder(clean_results))
     
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing request: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
 
-@app.post("/extract_products_time_series")
+
+@app.post("/extract_products_time_series", response_model=TimeSeriesExtractResponse)
 async def extract_products_time_series(
-    file: UploadFile = File(..., description="CSV or JSON with products: id_product, name, category, amount, time_sale")
+    file: UploadFile = File(..., description="CSV or JSON with product sales data"),
+    frequency: str = "D"
 ):
     """
-    Computes the time-series for each products in sales data  
+    Extracts time-series summaries for each product
     
-    Expected file format:
-    - id_product (int)
-    - name (str)
-    - category (str)
-    - amount (float)
-    - time_sale (datetime)
-
-    return: A time series for each product, its tendency and its stacionarity state
-
+    Returns for each product:
+    - Trend direction (increasing/decreasing/stable)
+    - Stationarity status
+    - Significant periodic patterns
+    - Sales date range
     """
-    # Read file
     try:
-        content = await file.read()
-        
-        if file.filename.endswith('.json'):
-            data = json.loads(content)
-            if isinstance(data, dict) and 'products' in data:
-                data = data['products']
-            df = pd.DataFrame(data)  # Convert to DataFrame consistently
-        elif file.filename.endswith('.csv'):
-            df = pd.read_csv(StringIO(content.decode('utf-8')))
-        else:
-            raise HTTPException(400, "Unsupported format. Use JSON or CSV")
-        
-        # Validate required fields
-        required_fields = ['id_product', 'name', 'category', 'amount', 'time_sale']
-        missing_fields = [field for field in required_fields if field not in df.columns]
-        if missing_fields:
-            raise HTTPException(400, f"Missing required fields: {missing_fields}. Needs: {required_fields}")
+        # Read and validate file
+        df = await read_uploaded_file(file)
+        validate_file_content(df)
         
         # Convert time_sale to datetime
         df['time_sale'] = pd.to_datetime(df['time_sale'])
         
-        # Processing pipeline:
-        #----------Aggregte data from input--------------- 
-        aggregated_data = aggregate_sales_by_time(df)
-
-        #----------Compute analyzis for each product----------
-        product_ids = aggregated_data['id_product'].unique()
-        time_series_results = []
-
-        for i, product_id in enumerate(product_ids):
-            if (i + 1) % 20 == 0:
-                print(f" Progress: {i+1}/{len(product_ids)} products analyzed")
-            time_series = get_products_time_series(product_id, aggregated_data)
-            if time_series:
-                time_series_results.append(time_series)
+        # Run extraction pipeline
+        logger.info(f"Starting time-series extraction with {len(df)} records")
+        results = run_time_series_extraction_pipeline(df, frequency=frequency)
         
-        corrected_json = convert_numpy_nativo({
-            'time_series_results': time_series_results
-        })
-       
-        return JSONResponse(content=jsonable_encoder(corrected_json))
-
+        # Convert to JSON serializable
+        clean_results = convert_numpy_nativo({'time_series_results': results})
         
-    except pd.errors.EmptyDataError:
-        raise HTTPException(400, "File is empty")
-    except json.JSONDecodeError:
-        raise HTTPException(400, "Invalid JSON format")
+        logger.info(f"Extraction complete. Processed {len(results)} products")
+        
+        return JSONResponse(content=jsonable_encoder(clean_results))
+    
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(500, f"Error processing file: {str(e)}")
+        logger.error(f"Error processing request: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
 
-            
 
 @app.get("/health")
 async def health_check():
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "methods": {
-            "method-1": {"name": "run_ts_clusters_analysis",
-                         "supported_formats": ["CSV", "JSON"]
-                         }
-        }        
+        "version": "2.0.0",
+        "endpoints": {
+            "/run_ts_clusters_analysis": {
+                "method": "POST",
+                "description": "Full cluster analysis",
+                "supported_formats": ["CSV", "JSON"]
+            },
+            "/extract_products_time_series": {
+                "method": "POST", 
+                "description": "Time series extraction only",
+                "supported_formats": ["CSV", "JSON"]
+            }
+        }
     }
 
-
-# ==================== MAIN (for local development) ====================
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
