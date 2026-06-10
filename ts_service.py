@@ -2,8 +2,6 @@
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-import warnings
-warnings.filterwarnings('ignore')
 
 from statsmodels.tsa.stattools import adfuller, acf, pacf
 from scipy import stats
@@ -16,6 +14,14 @@ import pywt
 from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass, asdict
 from functools import lru_cache
+
+from datahandle import numpy_to_json_serializable, convert_numpy_nativo
+
+import logging
+logger = logging.getLogger(__name__)
+
+import warnings
+warnings.filterwarnings('ignore')
 
 # ============================================
 # 1. DATA CLASSES FOR TYPE SAFETY
@@ -288,6 +294,92 @@ def analyze_all_products_optimized(
     return results
 
 
+def analyze_all_products_optimized_safe(
+    product_series_list: List[ProductSeries], 
+    progress_callback=None
+) -> List[AnalysisResult]:
+    """
+    Versión segura que maneja series constantes
+    """
+    analyses_results = []
+    
+    for i, ps in enumerate(product_series_list):
+        try:
+            # Verificar serie constante
+            if len(np.unique(ps.series)) == 1 or np.std(ps.series) == 0:
+                logger.warning(f"Producto {ps.product_name} tiene serie constante, asignando valores por defecto")
+                
+                # Crear resultado por defecto para series constantes
+                from models import StationarityResult, TrendResult, PeriodicityResult, StatisticalFeatures
+                
+                result = AnalysisResult(
+                    product_id=ps.product_id,
+                    product_name=ps.product_name,
+                    series=ps.series,
+                    dates=ps.dates,
+                    stationarity=StationarityResult(
+                        is_stationary=True,
+                        p_value=1.0,
+                        statistic=0.0,
+                        critical_values={},
+                        method='constant_series_fallback'
+                    ),
+                    trend=TrendResult(
+                        slope=0.0,
+                        intercept=np.mean(ps.series),
+                        trend_direction='stable',
+                        magnitude_per_period=0.0,
+                        r_squared=1.0,
+                        p_value=1.0
+                    ),
+                    periodicity=PeriodicityResult(
+                        main_period=None,
+                        period_strength=0.0,
+                        fft_frequencies=[],
+                        fft_power=[],
+                        autocorrelation_peaks=[]
+                    ),
+                    statistical_features=StatisticalFeatures(
+                        mean=np.mean(ps.series),
+                        std=np.std(ps.series),
+                        min=np.min(ps.series),
+                        max=np.max(ps.series),
+                        coefficient_variation=0.0,
+                        skewness=0.0,
+                        kurtosis=0.0,
+                        quantiles={
+                            '25%': np.percentile(ps.series, 25),
+                            '50%': np.percentile(ps.series, 50),
+                            '75%': np.percentile(ps.series, 75)
+                        }
+                    ),
+                    change_points=[],
+                    quality_metrics={
+                        'length': len(ps.series),
+                        'missing_ratio': 0.0,
+                        'zero_ratio': 0.0,
+                        'is_constant': True
+                    }
+                )
+                
+                analyses_results.append(result)
+                continue
+            
+            # Análisis normal para series no constantes
+            result = analyze_product_optimized(ps)
+            if result:
+                analyses_results.append(result)
+                
+        except Exception as e:
+            logger.error(f"Error analyzing product {ps.product_name}: {str(e)}")
+            continue
+        
+        if progress_callback:
+            progress_callback(i + 1, len(product_series_list))
+    
+    return analyses_results
+
+
 def get_product_summary_optimized(product_series: ProductSeries) -> Dict:
     """
     Lightweight summary for a single product
@@ -539,41 +631,6 @@ def _determine_cluster_characteristics(cluster_data: pd.DataFrame) -> List[str]:
         characteristics.append('Stationary process')
     
     return characteristics
-
-
-# ============================================
-# 7. UTILITY FUNCTIONS
-# ============================================
-
-def convert_numpy_nativo(obj: Any) -> Any:
-    """Convert numpy types to native Python types"""
-    if isinstance(obj, dict):
-        return {k: convert_numpy_nativo(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [convert_numpy_nativo(item) for item in obj]
-    elif isinstance(obj, tuple):
-        return tuple(convert_numpy_nativo(item) for item in obj)
-    elif isinstance(obj, (np.int8, np.int16, np.int32, np.int64)):
-        return int(obj)
-    elif isinstance(obj, (np.float16, np.float32, np.float64)):
-        return float(obj)
-    elif isinstance(obj, np.bool_):
-        return bool(obj)
-    elif isinstance(obj, np.datetime64):
-        return obj.astype(datetime)
-    elif isinstance(obj, np.ndarray):
-        return convert_numpy_nativo(obj.tolist())
-    else:
-        return obj
-
-
-def numpy_to_json_serializable(obj: Any) -> Any:
-    """Convert numpy types to JSON serializable"""
-    if hasattr(obj, 'tolist'):
-        return obj.tolist()
-    if hasattr(obj, 'item'):
-        return obj.item()
-    return obj
 
 
 # ============================================

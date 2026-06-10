@@ -3,6 +3,8 @@ from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, Any
 from datetime import datetime
 from enum import Enum
+from dataclasses import dataclass
+import numpy as np 
 
 
 class TrendDirection(str, Enum):
@@ -116,7 +118,6 @@ class DBSCANResults(BaseModel):
     eps: float
     min_samples: int
 
-
 class ClusterAnalysisResponse(BaseModel):
     analyses_results: List[ProductTimeSeriesAnalysis]
     kmeans_results: KMeansResults
@@ -124,6 +125,41 @@ class ClusterAnalysisResponse(BaseModel):
     dbscan_results: DBSCANResults
     cluster_summary: List[ClusterProfile]
 
-
 class TimeSeriesExtractResponse(BaseModel):
     time_series_results: List[ProductTimeSeriesSummary]
+
+@dataclass
+class ProductSeries:
+    product_id: str
+    product_name: str
+    series: np.ndarray  # Debe ser numpy array, NO lista
+    dates: np.ndarray   # Debe ser numpy array, NO lista
+    start_date: datetime
+    end_date: datetime
+
+
+# ============================================
+# MODELOS DE RESPUESTA PARA SWAGGER
+# ============================================
+
+class GraphNodeResponse(BaseModel):
+    node_id: str
+    node_type: str
+    properties: Dict[str, Any]
+
+class GraphEdgeResponse(BaseModel):
+    source: str
+    target: str
+    relation_type: str
+    weight: float
+    properties: Dict[str, Any]
+
+class GraphAnalysisResponse(BaseModel):
+    n_nodes: int
+    n_edges: int
+    n_products: int
+    n_stores: int
+    n_connected_components: int
+    relation_counts: Dict[str, int]
+    clustering_coefficient: float
+    density: float

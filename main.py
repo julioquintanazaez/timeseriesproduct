@@ -1,5 +1,5 @@
 # main.py
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Query
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,26 +11,39 @@ from typing import Optional, Dict, Any
 from datetime import datetime
 from io import StringIO
 import logging
+import networkx as nx
+from typing import Generator, Dict, Any, List, Tuple
 
 from fastapi.responses import StreamingResponse
 
 from models import (
     ClusterAnalysisResponse, 
     TimeSeriesExtractResponse,
-    ProductTimeSeriesAnalysis,
-    ProductTimeSeriesSummary,
-    KMeansResults,
-    HierarchicalResults,
-    DBSCANResults,
-    ClusterProfile
 )
 from ts_service import (
     run_cluster_analysis_pipeline,
     run_time_series_extraction_pipeline,
     convert_numpy_nativo,
     aggregate_sales_by_time_optimized,
-    extract_product_series_optimized
+    extract_product_series_optimized,
+    analyze_all_products_optimized_safe
 )
+
+from gp_service import (
+    run_complete_multigraph_pipeline,
+    extract_product_store_series_optimized,
+    aggregate_sales_by_product_store_optimized,
+    create_product_store_multigraph,
+    find_product_clusters_by_stationarity,
+    analyze_graph_advanced,
+    serialize_graph_to_json,
+    filter_constant_series
+)
+
+from datahandle import convert_numpy_nativo, validate_file_content
+
+from GraphSerializerHandle import GraphStreamSerializer
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -50,21 +63,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-def validate_file_content(df: pd.DataFrame) -> None:
-    """Validate file content and required fields"""
-    required_fields = ['id_product', 'name', 'category', 'amount', 'time_sale']
-    missing_fields = [field for field in required_fields if field not in df.columns]
-    if missing_fields:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Missing required fields: {missing_fields}. Required: {required_fields}"
-        )
-    
-    if len(df) == 0:
-        raise HTTPException(status_code=400, detail="File contains no data")
-
 
 async def read_uploaded_file(file: UploadFile) -> pd.DataFrame:
     """Read and parse uploaded file"""
@@ -131,7 +129,9 @@ async def run_ts_clusters_analysis(
     try:
         # Read and validate file
         df = await read_uploaded_file(file)
-        validate_file_content(df)
+
+        required_fields = ['id_product', 'name', 'category', 'amount', 'time_sale']
+        validate_file_content(required_fields, df)
         
         # Convert time_sale to datetime
         df['time_sale'] = pd.to_datetime(df['time_sale'])
@@ -182,7 +182,9 @@ async def extract_products_time_series(
     try:
         # Read and validate file
         df = await read_uploaded_file(file)
-        validate_file_content(df)
+        
+        required_fields = ['id_product', 'name', 'category', 'amount', 'time_sale']
+        validate_file_content(required_fields, df)
         
         # Convert time_sale to datetime
         df['time_sale'] = pd.to_datetime(df['time_sale'])
@@ -228,7 +230,9 @@ async def extract_raw_time_series(
     try:
         # Read and validate file
         df = await read_uploaded_file(file)
-        validate_file_content(df)
+        
+        required_fields = ['id_product', 'name', 'category', 'amount', 'time_sale']
+        validate_file_content(required_fields, df)
         
         # Convert time_sale to datetime
         df['time_sale'] = pd.to_datetime(df['time_sale'])
@@ -298,7 +302,6 @@ async def extract_raw_time_series(
         raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
     
 
-
 @app.post("/extract_raw_time_series_stream")
 async def extract_raw_time_series_stream(
     file: UploadFile = File(..., description="CSV or JSON with product sales data"),
@@ -311,7 +314,9 @@ async def extract_raw_time_series_stream(
     try:
         # Read and validate file
         df = await read_uploaded_file(file)
-        validate_file_content(df)
+        
+        required_fields = ['id_product', 'name', 'category', 'amount', 'time_sale']
+        validate_file_content(required_fields, df)
         
         # Convert time_sale to datetime
         df['time_sale'] = pd.to_datetime(df['time_sale'])
@@ -392,6 +397,226 @@ async def extract_raw_time_series_stream(
         logger.error(f"Error extracting raw time series: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
     
+
+@app.post("/build_product_sales_multigraph")
+async def build_product_multigraph(
+    file: UploadFile = File(...),
+    frequency: str = Query("D"),
+    stationarity_threshold: float = Query(0.05),
+    trend_similarity_threshold: float = Query(0.1),
+    min_purchases_together: int = Query(3),
+    include_store_nodes: bool = Query(True),
+    include_product_nodes: bool = Query(True)
+):
+    try:
+        # 1. Read and validate file
+        df = await read_uploaded_file(file)
+
+        required_fields = ['id_product, id_tienda', 'name', 'category', 'amount', 'time_sale']
+        #validate_file_content(required_fields, df)
+
+        print("step 1")
+        # 3. Aggregate data by time
+        aggregated_data = aggregate_sales_by_product_store_optimized(df, frequency)
+        
+        print("step 2")
+        # 4. Extract product time series with validation
+        product_series_list = extract_product_store_series_optimized(aggregated_data, 'sales_count')
+        
+        # 5. FILTRAR series constantes o inválidas
+        valid_series_list = []
+        constant_products = []
+        
+        for ps in product_series_list:
+            # Verificar si la serie es constante (todos los valores iguales)
+            if len(np.unique(ps.series)) == 1:
+                constant_products.append(ps.product_name)
+                logger.warning(f"Product {ps.product_name} has constant serie, it is excluded")
+                continue
+            
+            # Verificar varianza cero (alternativa)
+            if np.std(ps.series) == 0:
+                constant_products.append(ps.product_name)
+                logger.warning(f"Producto {ps.product_name} has variance iqual cero, it is excluded")
+                continue
+            
+            valid_series_list.append(ps)
+        
+        if not valid_series_list:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No valid product series found. {len(constant_products)} products had constant values."
+            )
+        
+        logger.info(f"Valid series: {len(valid_series_list)} of {len(product_series_list)}")
+        logger.info(f"Excluded products with constants series: {constant_products}")
+        
+        print("step 3")
+        # 6. Analyze all products (stationarity, trend, etc.)
+        analyses_results = analyze_all_products_optimized_safe(valid_series_list)
+        
+        total_products_analyzed = len(analyses_results)
+        
+        print("step 4")
+        # 7. Create multigraph
+        G = create_product_store_multigraph(
+            sales_df=df,
+            product_analyses=analyses_results,
+            frequency=frequency,
+            stationarity_threshold=stationarity_threshold,
+            trend_similarity_threshold=trend_similarity_threshold,
+            min_purchases_together=min_purchases_together,
+            include_store_nodes=include_store_nodes,
+            include_product_nodes=include_product_nodes
+        )
+        
+        print("step 5")
+        # 8. Advanced graph analysis
+        advanced_analysis = analyze_graph_advanced(G)
+        
+        print("step 6")
+        # 9. Find stationarity clusters
+        stationarity_clusters = find_product_clusters_by_stationarity(G)
+        
+        print("step 7")
+        # 10. Serialize graph data
+        graph_data = serialize_graph_to_json(G)
+        
+        print("step 8")
+        # 11. Prepare response
+        response = {
+            "status": "success",
+            "parameters": {
+                "frequency": frequency,
+                "stationarity_threshold": stationarity_threshold,
+                "trend_similarity_threshold": trend_similarity_threshold,
+                "min_purchases_together": min_purchases_together,
+                "include_store_nodes": include_store_nodes,
+                "include_product_nodes": include_product_nodes,
+                "total_products_analyzed": total_products_analyzed,
+                "total_products_filtered": len(product_series_list) - len(valid_series_list),
+                "constant_products_excluded": constant_products
+            },
+            "graph_summary": {
+                "total_nodes": G.number_of_nodes(),
+                "total_edges": G.number_of_edges(),
+                "product_nodes": sum(1 for n, d in G.nodes(data=True) if d.get('node_type') == 'product'),
+                "store_nodes": sum(1 for n, d in G.nodes(data=True) if d.get('node_type') == 'store')
+            },
+            "graph_analysis": advanced_analysis,
+            "stationarity_clusters": {
+                "stationary": stationarity_clusters.get('stationary', []),
+                "non_stationary": stationarity_clusters.get('non_stationary', [])
+            },
+            "graph_data": graph_data
+        }
+        
+        print("step 9")
+        # Convert numpy types to Python native types for JSON serialization
+        response = convert_numpy_nativo(response)
+        
+        print("step 10")
+        return JSONResponse(content=response)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error building product multigraph: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error building graph: {str(e)}")
+
+
+@app.post("/build_product_sales_multigraph_stream")
+async def build_product_multigraph_stream(
+    file: UploadFile = File(...),
+    frequency: str = Query("D"),
+    stationarity_threshold: float = Query(0.05),
+    trend_similarity_threshold: float = Query(0.1),
+    min_purchases_together: int = Query(3),
+    include_store_nodes: bool = Query(True),
+    include_product_nodes: bool = Query(True)
+):
+    """
+    Builds product-store multigraph with streaming response.
+    Returns complete data (statistics + full graph) as a stream.
+    """
+    try:
+        # 1. Read file
+        df = await read_uploaded_file(file)
+        
+        # 2. Process data
+        aggregated_data = aggregate_sales_by_product_store_optimized(df, frequency)
+        product_series_list = extract_product_store_series_optimized(aggregated_data, 'sales_count')
+        
+        # 3. Filter constant series
+        valid_series_list, constant_products = filter_constant_series(product_series_list)
+        
+        if not valid_series_list:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No valid product series found. {len(constant_products)} products had constant values."
+            )
+        
+        # 4. Analyze products
+        analyses_results = analyze_all_products_optimized_safe(valid_series_list)
+        
+        # 5. Create graph
+        G = create_product_store_multigraph(
+            sales_df=df,
+            product_analyses=analyses_results,
+            frequency=frequency,
+            stationarity_threshold=stationarity_threshold,
+            trend_similarity_threshold=trend_similarity_threshold,
+            min_purchases_together=min_purchases_together,
+            include_store_nodes=include_store_nodes,
+            include_product_nodes=include_product_nodes
+        )
+        
+        # 6. Analyze graph
+        advanced_analysis = analyze_graph_advanced(G)
+        stationarity_clusters = find_product_clusters_by_stationarity(G)
+        
+        # 7. Prepare parameters
+        parameters = {
+            "frequency": frequency,
+            "stationarity_threshold": stationarity_threshold,
+            "trend_similarity_threshold": trend_similarity_threshold,
+            "min_purchases_together": min_purchases_together,
+            "include_store_nodes": include_store_nodes,
+            "include_product_nodes": include_product_nodes,
+            "total_products_analyzed": len(analyses_results),
+            "total_products_filtered": len(product_series_list) - len(valid_series_list)
+        }
+        
+        # 8. Create stream serializer
+        serializer = GraphStreamSerializer(
+            G=G,
+            analyses_results=analyses_results,
+            advanced_analysis=advanced_analysis,
+            stationarity_clusters=stationarity_clusters,
+            parameters=parameters,
+            constant_products=constant_products
+        )
+        
+        # 9. Return streaming response
+        return StreamingResponse(
+            serializer.stream_full_response(),
+            media_type="application/json",
+            headers={
+                "Content-Disposition": 'inline; filename="graph_data.json"',
+                "X-Total-Nodes": str(G.number_of_nodes()),
+                "X-Total-Edges": str(G.number_of_edges()),
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no"  # Disable buffering for nginx
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error building product multigraph: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error building graph: {str(e)}")
+
+
 
 @app.get("/health")
 async def health_check():
