@@ -9,3 +9,5 @@ venvts
 .json
 .html
 .csv
+scriptupload.py
+ClientUnified.py

@@ -1,6 +1,6 @@
 # main.py
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
@@ -14,7 +14,6 @@ import logging
 import networkx as nx
 from typing import Generator, Dict, Any, List, Tuple
 
-from fastapi.responses import StreamingResponse
 
 from models import (
     ClusterAnalysisResponse, 
@@ -43,6 +42,8 @@ from gp_service import (
 from datahandle import convert_numpy_nativo, validate_file_content
 
 from GraphSerializerHandle import GraphStreamSerializer
+from SparseMatrixSerializerHandle import SparseMatrixSerializer
+from UnifiedSerializer import UnifiedGraphSerializer
 
 
 # Configure logging
@@ -617,6 +618,117 @@ async def build_product_multigraph_stream(
         raise HTTPException(status_code=500, detail=f"Error building graph: {str(e)}")
 
 
+@app.post("/build_product_sales_multigraph_unified")
+async def build_product_multigraph_unified(
+    file: UploadFile = File(...),
+    frequency: str = Query("D"),
+    stationarity_threshold: float = Query(0.05),
+    trend_similarity_threshold: float = Query(0.1),
+    min_purchases_together: int = Query(3),
+    include_store_nodes: bool = Query(True),
+    include_product_nodes: bool = Query(True),
+    compress: bool = Query(False),
+    compression_level: int = Query(6, ge=1, le=9),
+    include_full_analyses: bool = Query(True)
+):
+    """
+    Builds complete graph analysis with sparse matrix representation.
+    Handles AnalysisResult objects correctly.
+    """
+    try:
+        # 1. Leer archivo
+        df = await read_uploaded_file(file)
+        
+        # 2. Procesar datos
+        aggregated_data = aggregate_sales_by_product_store_optimized(df, frequency)
+        product_series_list = extract_product_store_series_optimized(aggregated_data, 'sales_count')
+        
+        # 3. Filtrar series constantes
+        valid_series_list, constant_products = filter_constant_series(product_series_list)
+        
+        if not valid_series_list:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No valid product series found. {len(constant_products)} products had constant values."
+            )
+        
+        # 4. Analizar productos (esto devuelve objetos AnalysisResult)
+        analyses_results = analyze_all_products_optimized_safe(valid_series_list)
+        
+        # 5. Crear grafo
+        G = create_product_store_multigraph(
+            sales_df=df,
+            product_analyses=analyses_results,
+            frequency=frequency,
+            stationarity_threshold=stationarity_threshold,
+            trend_similarity_threshold=trend_similarity_threshold,
+            min_purchases_together=min_purchases_together,
+            include_store_nodes=include_store_nodes,
+            include_product_nodes=include_product_nodes
+        )
+        
+        # 6. Analizar grafo
+        advanced_analysis = analyze_graph_advanced(G)
+        stationarity_clusters = find_product_clusters_by_stationarity(G)
+        
+        # 7. Parámetros
+        parameters = {
+            "frequency": frequency,
+            "stationarity_threshold": stationarity_threshold,
+            "trend_similarity_threshold": trend_similarity_threshold,
+            "min_purchases_together": min_purchases_together,
+            "include_store_nodes": include_store_nodes,
+            "include_product_nodes": include_product_nodes,
+            "total_products_analyzed": len(analyses_results),
+            "total_products_filtered": len(product_series_list) - len(valid_series_list),
+            "compression_enabled": compress,
+            "include_full_analyses": include_full_analyses
+        }
+        
+        # 8. Crear serializador unificado
+        serializer = UnifiedGraphSerializer(
+            G=G,
+            analyses_results=analyses_results if include_full_analyses else [],
+            advanced_analysis=advanced_analysis,
+            stationarity_clusters=stationarity_clusters,
+            parameters=parameters,
+            constant_products=constant_products
+        )
+        
+        # 9. Retornar respuesta
+        if compress:
+            compressed_data = serializer.export_compressed(compression_level)
+            
+            return Response(
+                content=compressed_data,
+                media_type="application/gzip",
+                headers={
+                    "Content-Disposition": f'attachment; filename="graph_unified_{frequency}.json.gz"',
+                    "X-Total-Nodes": str(G.number_of_nodes()),
+                    "X-Total-Edges": str(G.number_of_edges()),
+                    "X-Compressed": "true",
+                    "X-Compression-Level": str(compression_level)
+                }
+            )
+        else:
+            return StreamingResponse(
+                serializer.stream_unified_response(),
+                media_type="application/json",
+                headers={
+                    "Content-Disposition": 'inline; filename="graph_unified.json"',
+                    "X-Total-Nodes": str(G.number_of_nodes()),
+                    "X-Total-Edges": str(G.number_of_edges()),
+                    "X-Format": "unified-sparse",
+                    "Cache-Control": "no-cache"
+                }
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error building unified graph: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error building graph: {str(e)}")
+    
 
 @app.get("/health")
 async def health_check():
