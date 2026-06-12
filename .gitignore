@@ -6,6 +6,6 @@ venvts
 .env
 
 # Files
-analyses_results.json
+.json
 .html
 .csv
