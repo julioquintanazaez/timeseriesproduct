@@ -11,6 +11,7 @@ h11==0.16.0
 idna==3.16
 joblib==1.5.3
 llvmlite==0.47.0
+networkx==3.6.1
 numba==0.65.1
 numpy==2.4.6
 packaging==26.2
